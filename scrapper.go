@@ -10,8 +10,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const baseUrl = "https://www.bungie.net/Platform/"
-const manifestPath = "Destiny2/Manifest"
+const baseUrl = "https://www.bungie.net"
+const manifestPath = "/Platform/Destiny2/Manifest"
 
 type Manifest struct {
 	Response struct {
@@ -29,7 +29,7 @@ type Manifest struct {
 type ManifestResponse map[string]ManifestObject
 
 type ManifestObject struct {
-	Mode                      *int              `json:"mode,omitempty"` // Using *int to handle nil values
+	Mode                      int              `json:"directActivityModeType"` // Using *int to handle nil values
 	DisplayProperties         DisplayProperties `json:"displayProperties"`
 	OriginalDisplayProperties DisplayProperties `json:"originalDisplayProperties"`
 	ReleaseIcon               string            `json:"releaseIcon"`
@@ -63,8 +63,8 @@ func fetchManifest(url string) (Manifest, error) {
 
   var manifest Manifest
   if err := json.Unmarshal(body, &manifest); err != nil {
-    log.Fatalf("Failed to unmarshal JSON: %v", err)
-    return Manifest{}, fmt.Errorf("Failed to unmarshal JSON: %v", err)
+    log.Fatalf("Failed to unmarshal JSON while fetching manifest: %v", err)
+    return Manifest{}, fmt.Errorf("Failed to unmarshal JSON while fetching manifest: %v", err)
   }
 
   return manifest, nil
@@ -92,17 +92,23 @@ func fetchManifestEntities(url string) (ManifestResponse, error) {
   return manifest, nil
 }
 
+/**
+* Filter out activities based on the mode
+*/
 func filterActivities(manifestResponse ManifestResponse) ManifestResponse {
 	// Filtering out manifest objects
+  log.Printf("Size of response before filtering: %d", len(manifestResponse))
   filteredManifest := make(ManifestResponse)
+
 	for hash, data := range manifestResponse {
-		if data.Mode == nil || *data.Mode != 3 {
-			// Skip if mode is nil or mode is not equal to 3
+		if data.Mode != 4 {
+			// Skip if mode is nil or mode is not equal to 4
 			continue
 		}
 		filteredManifest[hash] = data
 	}
 
+  log.Printf("Size of response after filtering: %d", len(filteredManifest))
 	return filteredManifest
 }
 
@@ -116,13 +122,22 @@ func clearCache(ctx context.Context, client *redis.Client) error {
   return nil;
 }
 
+/**
+* Save the data to Redis
+*/
 func saveToRedis(ctx context.Context, client *redis.Client, data ManifestResponse) error {
+  log.Printf("Saving %d items to Redis", len(data))
   for key, value := range data {
-    if err := client.Set(ctx, key, value, 0); err != nil {
-      log.Panicf("Something happened when saving to Redis key [%s] and value [%v]", key, value)
-      return fmt.Errorf("Something happened when saving to Redis!")
+
+    jsonValue, err := json.Marshal(value)
+    log.Printf("Saving hash [%s] with value [%v] to Redis...", key, value)
+    if err != nil {
+      return fmt.Errorf("Failed to serialize data to JSON for key [%s] and value [%v]. Error: %v", key, value, err)
     }
-  } 
+
+    client.Set(ctx, key, jsonValue, 0)
+  }
+  log.Printf("Finished saving all items to Redis!")
   return nil
 }
 
@@ -135,6 +150,7 @@ func flattenMaps(responses ...ManifestResponse) ManifestResponse {
         }
     }
 
+    log.Printf("Size of flattening data is: %d", len(result))
     return result
 }
 
@@ -177,7 +193,7 @@ func main() {
   }
 
   filteredActivities := filterActivities(activityInfo)
-  data := flattenMaps(raceInfo, classInfo, genderInfo, activityInfo, filteredActivities) 
+  data := flattenMaps(raceInfo, classInfo, genderInfo, filteredActivities) 
   
   saveToRedis(ctx, client, data)
 }
