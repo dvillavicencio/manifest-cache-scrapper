@@ -71,9 +71,9 @@ func fetchManifest(url string) (Manifest, error) {
 }
 
 /**
-* Fetches and filters all the corresponding manifest entities
+* Fetches all the corresponding manifest entities
 */
-func fetchAndFilterManifestEntities(url string) (ManifestResponse, error) {
+func fetchManifestEntities(url string) (ManifestResponse, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %w", err)
@@ -89,12 +89,13 @@ func fetchAndFilterManifestEntities(url string) (ManifestResponse, error) {
 	if err := json.Unmarshal(body, &manifest); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
 	}
+  return manifest, nil
+}
 
-	// Create a new map for filtered results
-	filteredManifest := make(ManifestResponse)
-
+func filterActivities(manifestResponse ManifestResponse) ManifestResponse {
 	// Filtering out manifest objects
-	for hash, data := range manifest {
+  filteredManifest := make(ManifestResponse)
+	for hash, data := range manifestResponse {
 		if data.Mode == nil || *data.Mode != 3 {
 			// Skip if mode is nil or mode is not equal to 3
 			continue
@@ -102,36 +103,83 @@ func fetchAndFilterManifestEntities(url string) (ManifestResponse, error) {
 		filteredManifest[hash] = data
 	}
 
-	return filteredManifest, nil
+	return filteredManifest
 }
 
-func clearCache() {
-  client := redis.NewClient(&redis.Options{
-    Addr: "localhost:6379",
-    Password: "",
-    DB: 0,
-    Protocol: 2,
-  })
-  ctx := context.Background();
-
-  client.FlushAll(ctx);
+func clearCache(ctx context.Context, client *redis.Client) error {
+  
+  result, err := client.FlushAll(ctx).Result();
+  if err != nil {
+    return fmt.Errorf("Failed to flush the Redis cache: %w", err)
+  }
+  log.Printf("Redis cache cleared: %s", result)
+  return nil;
 }
 
-func saveToRedis(client Redis, data ManifestResponse) {
+func saveToRedis(ctx context.Context, client *redis.Client, data ManifestResponse) error {
+  for key, value := range data {
+    if err := client.Set(ctx, key, value, 0); err != nil {
+      log.Panicf("Something happened when saving to Redis key [%s] and value [%v]", key, value)
+      return fmt.Errorf("Something happened when saving to Redis!")
+    }
+  } 
+  return nil
+}
+
+func flattenMaps(responses ...ManifestResponse) ManifestResponse {
+    result := make(ManifestResponse)
+
+    for _, m := range responses {
+        for key, value := range m {
+            result[key] = value // Overwrites if the key already exists
+        }
+    }
+
+    return result
 }
 
 func main() {
-  clearCache()
+  client := redis.NewClient(&redis.Options{
+      Addr: "localhost:6379",
+      Password: "",
+      DB: 0,
+      Protocol: 2,
+    })
+  
+  ctx := context.Background()
+  if err := clearCache(ctx, client); err != nil {
+    fmt.Println("Error clearing cache: ", err)
+    return
+  } 
+
   manifest, err := fetchManifest(baseUrl + manifestPath)
   if err != nil {
     log.Fatalf("%v", err)
+  } 
+
+  raceInfo, err := fetchManifestEntities(baseUrl + manifest.Response.JSONWorldComponentContentPaths.En.DestinyRaceDefinition)
+  if err != nil {
+    log.Fatalf("Error fetching race entities")
+    return
+  }
+  classInfo, err := fetchManifestEntities(baseUrl + manifest.Response.JSONWorldComponentContentPaths.En.DestinyClassDefinition)
+  if err != nil {
+    log.Fatalf("Error fetching class entities")
+  }
+  genderInfo, err := fetchManifestEntities(baseUrl + manifest.Response.JSONWorldComponentContentPaths.En.DestinyGenderDefinition)
+  if err != nil {
+    log.Fatalf("Error fetching gender entities")
   }
 
-	filteredManifest, err := fetchAndFilterManifestEntities(baseUrl + ) 
-	if err != nil {
-		log.Fatalf("Error fetching and filtering manifest: %v", err)
-	}
+  activityInfo, err := fetchManifestEntities(baseUrl + manifest.Response.JSONWorldComponentContentPaths.En.DestinyActivityDefinition)
+  if err != nil {
+    log.Fatalf("Error fetching activity entities")
+  }
 
-  saveToRedis(filteredManifest) 
+  filteredActivities := filterActivities(activityInfo)
+  data := flattenMaps(raceInfo, classInfo, genderInfo, activityInfo, filteredActivities) 
+  
+  saveToRedis(ctx, client, data)
+
 }
 
