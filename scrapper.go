@@ -159,27 +159,26 @@ func main() {
 
   raceInfo, err := fetchManifestEntities(baseUrl + manifest.Response.JSONWorldComponentContentPaths.En.DestinyRaceDefinition)
   if err != nil {
-    log.Fatalf("Error fetching race entities")
+    log.Fatalf("Error fetching race entities: %v", err)
     return
   }
   classInfo, err := fetchManifestEntities(baseUrl + manifest.Response.JSONWorldComponentContentPaths.En.DestinyClassDefinition)
   if err != nil {
-    log.Fatalf("Error fetching class entities")
+    log.Fatalf("Error fetching class entities: %v", err)
   }
   genderInfo, err := fetchManifestEntities(baseUrl + manifest.Response.JSONWorldComponentContentPaths.En.DestinyGenderDefinition)
   if err != nil {
-    log.Fatalf("Error fetching gender entities")
+    log.Fatalf("Error fetching gender entities: %v", err)
   }
 
   activityInfo, err := fetchManifestEntities(baseUrl + manifest.Response.JSONWorldComponentContentPaths.En.DestinyActivityDefinition)
   if err != nil {
-    log.Fatalf("Error fetching activity entities")
+    log.Fatalf("Error fetching activity entities: %v", err)
   }
 
   filteredActivities := filterActivities(activityInfo)
   data := flattenMaps(raceInfo, classInfo, genderInfo, activityInfo, filteredActivities) 
   
   saveToRedis(ctx, client, data)
-
 }
 
