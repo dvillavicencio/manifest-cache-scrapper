@@ -21,6 +21,8 @@ type Manifest struct {
 				DestinyClassDefinition    string `json:"DestinyClassDefinition"`
 				DestinyGenderDefinition   string `json:"DestinyGenderDefinition"`
 				DestinyRaceDefinition     string `json:"DestinyRaceDefinition"`
+        DestinyItemDefinition     string `json:"DestinyInventoryItemDefinition"`
+        DestinySlotDefinition     string `json:"DestinyEquipmentSlotDefinition"`
 			} `json:"en"`
 		} `json:"jsonWorldComponentContentPaths"`
 	} `json:"Response"`
@@ -34,6 +36,8 @@ type ManifestObject struct {
 	OriginalDisplayProperties DisplayProperties `json:"originalDisplayProperties"`
 	ReleaseIcon               string            `json:"releaseIcon"`
 	ReleaseTime               int               `json:"releaseTime"`
+  ItemType                  int               `json:"itemType"`
+  EquippingBlock            EquippingBlock    `json:"equippingBlock"`
 	// Other fields omitted for brevity
 }
 
@@ -43,6 +47,12 @@ type DisplayProperties struct {
 	Icon        string `json:"icon"`
 	HasIcon     bool   `json:"hasIcon"`
 }
+
+
+type EquippingBlock struct {
+  EquipmentSlotTypeHash int `json:"equipmentSlotTypeHash"`
+  AmmoType              int `json:"ammoType"`
+} 
 
 /**
 * Fetches the latest manifest
@@ -92,21 +102,20 @@ func fetchManifestEntities(url string) (ManifestResponse, error) {
   return manifest, nil
 }
 
-/**
-* Filter out activities based on the mode
+/*
+* Filter out manifest objects based of if they're a weapon or not
 */
-func filterActivities(manifestResponse ManifestResponse) ManifestResponse {
-	// Filtering out manifest objects
+func filterInventoryItems(manifestResponse ManifestResponse) ManifestResponse {
+  // Filtering out manifest objects
   log.Printf("Size of response before filtering: %d", len(manifestResponse))
   filteredManifest := make(ManifestResponse)
 
 	for hash, data := range manifestResponse {
-		if data.Mode != 4 {
-			// Skip if mode is nil or mode is not equal to 4
-			continue
+    // Skip if not a weapon
+		if data.ItemType == 3 {
+			filteredManifest[hash] = data
 		}
-		filteredManifest[hash] = data
-	}
+  }
 
   log.Printf("Size of response after filtering: %d", len(filteredManifest))
 	return filteredManifest
@@ -127,6 +136,7 @@ func clearCache(ctx context.Context, client *redis.Client) error {
 */
 func saveToRedis(ctx context.Context, client *redis.Client, data ManifestResponse) error {
   log.Printf("Saving %d items to Redis", len(data))
+  var count = 0
   for key, value := range data {
 
     jsonValue, err := json.Marshal(value)
@@ -136,8 +146,9 @@ func saveToRedis(ctx context.Context, client *redis.Client, data ManifestRespons
     }
 
     client.Set(ctx, key, jsonValue, 0)
+    count++
   }
-  log.Printf("Finished saving all items to Redis!")
+  log.Printf("Finished saving [%d] items to Redis!", count)
   return nil
 }
 
@@ -192,8 +203,18 @@ func main() {
     log.Fatalf("Error fetching activity entities: %v", err)
   }
 
-  filteredActivities := filterActivities(activityInfo)
-  data := flattenMaps(raceInfo, classInfo, genderInfo, filteredActivities) 
+  itemInfo, err := fetchManifestEntities(baseUrl + manifest.Response.JSONWorldComponentContentPaths.En.DestinyItemDefinition)
+  if err != nil {
+    log.Fatalf("Error fetching item entities: %v", err)
+  }
+  
+  equipmentSlot, err := fetchManifestEntities(baseUrl + manifest.Response.JSONWorldComponentContentPaths.En.DestinySlotDefinition)
+  if err != nil {
+    log.Fatalf("Error fetching item entities: %v", err)
+  }
+
+  filteredInventoryItems := filterInventoryItems(itemInfo)
+  data := flattenMaps(raceInfo, classInfo, genderInfo, activityInfo, filteredInventoryItems, equipmentSlot)
   
   saveToRedis(ctx, client, data)
 }
